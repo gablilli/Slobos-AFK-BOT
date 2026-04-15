@@ -110,8 +110,20 @@ app.get('/', (req, res) => {
             border-radius: 8px; font-weight: bold; 
             box-shadow: 0 0 15px rgba(45, 212, 191, 0.4);
             transition: transform 0.2s;
+            border: 0;
+            cursor: pointer;
           }
           .btn-guide:hover { transform: translateY(-2px); }
+          .btn-reconnect {
+            margin-left: 10px;
+            background: #f87171;
+            color: #0f172a;
+            box-shadow: 0 0 15px rgba(248, 113, 113, 0.4);
+          }
+          .btn-reconnect:disabled {
+            opacity: 0.7;
+            cursor: wait;
+          }
           .connection-bar {
             height: 4px; background: #334155; width: 100%; margin-top: 20px; border-radius: 2px; overflow: hidden;
           }
@@ -154,6 +166,8 @@ app.get('/', (req, res) => {
           </div>
 
           <a href="/tutorial" class="btn-guide">View Setup Guide</a>
+          <button id="reconnect-btn" class="btn-guide btn-reconnect" type="button">Riconnetti</button>
+          <p id="reconnect-feedback" style="color: #94a3b8; font-size: 12px; margin-top: 8px; min-height: 16px;"></p>
           
           <div class="connection-bar">
             <div class="connection-fill" id="activity-bar"></div>
@@ -211,6 +225,30 @@ app.get('/', (req, res) => {
               document.getElementById('live-indicator').style.color = '#64748b'; // Grey
             }
           };
+
+          const RECONNECT_BUTTON_COOLDOWN_MS = 1500;
+          const reconnectBtn = document.getElementById('reconnect-btn');
+          const reconnectFeedback = document.getElementById('reconnect-feedback');
+          reconnectBtn.addEventListener('click', async () => {
+            reconnectBtn.disabled = true;
+            reconnectBtn.innerText = 'Riconnessione...';
+            reconnectFeedback.innerText = '';
+            try {
+              const response = await fetch('/reconnect', { method: 'POST' });
+              if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.message || 'Riconnessione non riuscita');
+              }
+              reconnectFeedback.innerText = 'Richiesta di riconnessione inviata.';
+            } catch (e) {
+              reconnectFeedback.innerText = e.message || 'Errore durante la riconnessione.';
+            } finally {
+              setTimeout(() => {
+                reconnectBtn.disabled = false;
+                reconnectBtn.innerText = 'Riconnetti';
+              }, RECONNECT_BUTTON_COOLDOWN_MS);
+            }
+          });
 
           // Poll every 1 second
           setInterval(updateStats, 1000);
@@ -285,6 +323,18 @@ app.get('/health', (req, res) => {
     reconnectAttempts: botState.reconnectAttempts,
     memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024
   });
+});
+
+app.post('/reconnect', (req, res) => {
+  console.log('[Dashboard] Manual reconnect requested');
+
+  if (isReconnecting) {
+    return res.status(409).json({ ok: false, message: 'Reconnect already in progress' });
+  }
+
+  scheduleReconnect(0);
+
+  res.json({ ok: true, message: 'Reconnect requested' });
 });
 
 app.get('/ping', (req, res) => res.send('pong'));
@@ -545,7 +595,7 @@ function createBot() {
   }
 }
 
-function scheduleReconnect() {
+function scheduleReconnect(overrideDelayMs) {
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
   }
@@ -557,7 +607,7 @@ function scheduleReconnect() {
   isReconnecting = true;
   botState.reconnectAttempts++;
 
-  const delay = getReconnectDelay();
+  const delay = Number.isFinite(overrideDelayMs) ? Math.max(0, overrideDelayMs) : getReconnectDelay();
   console.log(`[Bot] Reconnecting in ${delay / 1000}s (attempt #${botState.reconnectAttempts})`);
 
   reconnectTimeout = setTimeout(() => {
