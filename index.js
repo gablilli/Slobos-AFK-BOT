@@ -167,6 +167,7 @@ app.get('/', (req, res) => {
 
           <a href="/tutorial" class="btn-guide">View Setup Guide</a>
           <button id="reconnect-btn" class="btn-guide btn-reconnect" type="button">Riconnetti</button>
+          <p id="reconnect-feedback" style="color: #94a3b8; font-size: 12px; margin-top: 8px; min-height: 16px;"></p>
           
           <div class="connection-bar">
             <div class="connection-fill" id="activity-bar"></div>
@@ -225,19 +226,27 @@ app.get('/', (req, res) => {
             }
           };
 
+          const RECONNECT_BUTTON_COOLDOWN_MS = 1500;
           const reconnectBtn = document.getElementById('reconnect-btn');
+          const reconnectFeedback = document.getElementById('reconnect-feedback');
           reconnectBtn.addEventListener('click', async () => {
             reconnectBtn.disabled = true;
             reconnectBtn.innerText = 'Riconnessione...';
+            reconnectFeedback.innerText = '';
             try {
-              await fetch('/reconnect', { method: 'POST' });
+              const response = await fetch('/reconnect', { method: 'POST' });
+              if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.message || 'Riconnessione non riuscita');
+              }
+              reconnectFeedback.innerText = 'Richiesta di riconnessione inviata.';
             } catch (e) {
-              // ignore network/UI errors, next poll updates status
+              reconnectFeedback.innerText = e.message || 'Errore durante la riconnessione.';
             } finally {
               setTimeout(() => {
                 reconnectBtn.disabled = false;
                 reconnectBtn.innerText = 'Riconnetti';
-              }, 1500);
+              }, RECONNECT_BUTTON_COOLDOWN_MS);
             }
           });
 
@@ -318,6 +327,10 @@ app.get('/health', (req, res) => {
 
 app.post('/reconnect', (req, res) => {
   console.log('[Dashboard] Manual reconnect requested');
+
+  if (isReconnecting) {
+    return res.status(409).json({ ok: false, message: 'Reconnect already in progress' });
+  }
 
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
