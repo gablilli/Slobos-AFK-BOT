@@ -332,13 +332,7 @@ app.post('/reconnect', (req, res) => {
     return res.status(409).json({ ok: false, message: 'Reconnect already in progress' });
   }
 
-  if (reconnectTimeout) {
-    clearTimeout(reconnectTimeout);
-    reconnectTimeout = null;
-  }
-
-  isReconnecting = false;
-  createBot();
+  scheduleReconnect(0);
 
   res.json({ ok: true, message: 'Reconnect requested' });
 });
@@ -601,7 +595,7 @@ function createBot() {
   }
 }
 
-function scheduleReconnect() {
+function scheduleReconnect(overrideDelayMs) {
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
   }
@@ -613,7 +607,7 @@ function scheduleReconnect() {
   isReconnecting = true;
   botState.reconnectAttempts++;
 
-  const delay = getReconnectDelay();
+  const delay = Number.isFinite(overrideDelayMs) ? Math.max(0, overrideDelayMs) : getReconnectDelay();
   console.log(`[Bot] Reconnecting in ${delay / 1000}s (attempt #${botState.reconnectAttempts})`);
 
   reconnectTimeout = setTimeout(() => {
