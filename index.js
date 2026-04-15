@@ -1,6 +1,7 @@
 const mineflayer = require('mineflayer');
 const { Movements, pathfinder, goals } = require('mineflayer-pathfinder');
 const { GoalBlock } = goals;
+const { mineflayer: mineflayerViewer } = require('prismarine-viewer');
 const config = require('./settings.json');
 const express = require('express');
 const http = require('http');
@@ -10,6 +11,7 @@ const http = require('http');
 // ============================================================
 const app = express();
 const PORT = process.env.PORT || 5000;
+const VIEWER_PORT = Number(process.env.VIEWER_PORT || 3001);
 
 // Bot state tracking
 let botState = {
@@ -19,6 +21,24 @@ let botState = {
   startTime: Date.now(),
   errors: []
 };
+let viewerReady = false;
+
+function getViewerPublicUrl(req) {
+  if (process.env.VIEWER_PUBLIC_URL) return process.env.VIEWER_PUBLIC_URL;
+
+  const hostHeader = (req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
+  const forwardedProto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+
+  const hostWithoutPort = hostHeader.includes(':')
+    ? hostHeader.slice(0, hostHeader.lastIndexOf(':'))
+    : hostHeader || 'localhost';
+
+  const protocol = process.env.VIEWER_PUBLIC_PROTOCOL || forwardedProto || 'http';
+  const host = process.env.VIEWER_PUBLIC_HOST || hostWithoutPort;
+  const port = process.env.VIEWER_PUBLIC_PORT || VIEWER_PORT;
+
+  return `${protocol}://${host}:${port}`;
+}
 
 // Health check endpoint for monitoring
 // Health check endpoint for monitoring
@@ -269,6 +289,36 @@ app.get('/health', (req, res) => {
 
 app.get('/ping', (req, res) => res.send('pong'));
 
+app.get('/snapshot', (req, res) => {
+  if (!bot || !botState.connected) {
+    return res.status(503).send('Bot non connesso: impossibile generare snapshot ora.');
+  }
+
+  if (!viewerReady) {
+    return res.status(503).send('Viewer non pronto: attendi qualche secondo e riprova.');
+  }
+
+  const viewerUrl = getViewerPublicUrl(req);
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>${config.name} Snapshot</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body { margin: 0; background: #0f172a; color: #e2e8f0; font-family: Arial, sans-serif; }
+          .header { padding: 12px 16px; background: #1e293b; border-bottom: 1px solid #334155; }
+          .viewer { width: 100vw; height: calc(100vh - 52px); border: 0; display: block; }
+        </style>
+      </head>
+      <body>
+        <div class="header">Snapshot live del bot (first person)</div>
+        <iframe class="viewer" src="${viewerUrl}"></iframe>
+      </body>
+    </html>
+  `);
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[Server] HTTP server started on port ${PORT}`);
 });
@@ -377,7 +427,7 @@ function createBot() {
       checkTimeoutInterval: 120000 // 2 minutes - detects dead connections without false-positive disconnects
     });
 
-    bot.loadPlugin(pathfinder);
+      bot.loadPlugin(pathfinder);
 
     // Connection timeout - if no spawn in 60s, reconnect
     const connectionTimeout = setTimeout(() => {
@@ -387,17 +437,25 @@ function createBot() {
       }
     }, 60000);
 
-    bot.once('spawn', () => {
+      bot.once('spawn', () => {
       clearTimeout(connectionTimeout);
       botState.connected = true;
       botState.lastActivity = Date.now();
       botState.reconnectAttempts = 0;
       isReconnecting = false;
 
-      console.log(`[Bot] [+] Successfully spawned on server!`);
-      if (config.discord && config.discord.events.connect) {
-        sendDiscordWebhook(`[+] **Connected** to \`${config.server.ip}\``, 0x4ade80); // Green
-      }
+        console.log(`[Bot] [+] Successfully spawned on server!`);
+        try {
+          mineflayerViewer(bot, { port: VIEWER_PORT, firstPerson: true });
+          viewerReady = true;
+          console.log(`[Viewer] Started on port ${VIEWER_PORT} (first person)`);
+        } catch (e) {
+          viewerReady = false;
+          console.log(`[Viewer] Failed to start: ${e.message}`);
+        }
+        if (config.discord && config.discord.events.connect) {
+          sendDiscordWebhook(`[+] **Connected** to \`${config.server.ip}\``, 0x4ade80); // Green
+        }
 
       const mcData = require('minecraft-data')(config.server.version);
       const defaultMove = new Movements(bot, mcData);
@@ -446,6 +504,7 @@ function createBot() {
       const wasSpawned = botState.connected;
       console.log(`[Bot] Disconnected: ${reason || 'Unknown reason'}`);
       botState.connected = false;
+      viewerReady = false;
       clearAllIntervals();
 
       if (config.discord && config.discord.events.disconnect && reason !== 'Periodic Rejoin') {
@@ -461,6 +520,7 @@ function createBot() {
       const wasSpawned = botState.connected;
       console.log(`[Bot] Kicked: ${reason}`);
       botState.connected = false;
+      viewerReady = false;
       botState.errors.push({ type: 'kicked', reason, time: Date.now() });
       clearAllIntervals();
 

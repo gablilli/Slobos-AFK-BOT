@@ -32,6 +32,7 @@ We have made setup super easy! Check out the guide below:
 ## ⚙️ Usage
 *   **Start**: Just turn on your Aternos server. The bot will join automatically.
 *   **Status**: Visit the Render URL to see a status dashboard.
+*   **Snapshot**: Open `/snapshot` in the browser to see the bot view (first person).
 *   **Chat**: The bot logs chat to the console.
 
 ---
