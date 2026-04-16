@@ -6,6 +6,7 @@
     "type": "offline"
   },
   "server": {
+    "protocol": "bedrock",
     "ip": "thijngamer011.aternos.me",
     "port": 48412,
     "version": "1.21.1"

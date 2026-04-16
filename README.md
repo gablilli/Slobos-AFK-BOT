@@ -35,6 +35,11 @@ We have made setup super easy! Check out the guide below:
 *   **Snapshot**: Open `/snapshot` in the browser to see the bot view (first person).
 *   **Chat**: The bot logs chat to the console.
 
+### Protocol selection (`settings.json`)
+Set `server.protocol` to choose the connection type:
+- `java` (default Mineflayer behavior)
+- `bedrock` (uses `bedrock-protocol`)
+
 ---
 
 ## ⚠️ Disclaimer

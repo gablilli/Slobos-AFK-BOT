@@ -2,6 +2,7 @@ const mineflayer = require('mineflayer');
 const { Movements, pathfinder, goals } = require('mineflayer-pathfinder');
 const { GoalBlock } = goals;
 const { mineflayer: mineflayerViewer } = require('prismarine-viewer');
+const bedrockProtocol = require('bedrock-protocol');
 const config = require('./settings.json');
 const express = require('express');
 const http = require('http');
@@ -337,6 +338,10 @@ app.post('/reconnect', (req, res) => {
 app.get('/ping', (req, res) => res.send('pong'));
 
 app.get('/snapshot', (req, res) => {
+  if (isBedrockMode) {
+    return res.status(501).send('Snapshot non supportato in modalità Bedrock.');
+  }
+
   if (!bot || !botState.connected) {
     return res.status(503).send('Bot non connesso: impossibile generare snapshot ora.');
   }
@@ -413,9 +418,12 @@ setInterval(() => {
 // BOT CREATION WITH RECONNECTION LOGIC
 // ============================================================
 let bot = null;
+let bedrockClient = null;
 let activeIntervals = [];
 let reconnectTimeout = null;
 let isReconnecting = false;
+const serverProtocol = String(config.server?.protocol || 'java').toLowerCase();
+const isBedrockMode = serverProtocol === 'bedrock';
 
 function clearAllIntervals() {
   console.log(`[Cleanup] Clearing ${activeIntervals.length} intervals`);
@@ -441,6 +449,65 @@ function getReconnectDelay() {
   return delay;
 }
 
+function sendBedrockChatMessage(message) {
+  if (!bedrockClient || !botState.connected) return;
+  try {
+    bedrockClient.queue('text', {
+      type: 'chat',
+      needs_translation: false,
+      source_name: config['bot-account'].username,
+      xuid: '',
+      platform_chat_id: '',
+      filtered_message: '',
+      message: String(message)
+    });
+  } catch (e) {
+    console.log(`[Bedrock] Chat send failed: ${e.message}`);
+  }
+}
+
+function initializeBedrockModules() {
+  console.log('[Bedrock] Initializing compatible modules...');
+
+  if (config.utils['auto-auth']?.enabled) {
+    const password = config.utils['auto-auth'].password;
+    setTimeout(() => {
+      sendBedrockChatMessage(`/register ${password} ${password}`);
+      sendBedrockChatMessage(`/login ${password}`);
+      console.log('[Bedrock] Sent login commands');
+    }, 1000);
+  }
+
+  if (config.utils['chat-messages']?.enabled) {
+    const messages = config.utils['chat-messages'].messages || [];
+    if (messages.length > 0) {
+      if (config.utils['chat-messages'].repeat) {
+        let i = 0;
+        addInterval(() => {
+          if (!botState.connected || messages.length === 0) return;
+          sendBedrockChatMessage(messages[i]);
+          botState.lastActivity = Date.now();
+          i = (i + 1) % messages.length;
+        }, config.utils['chat-messages']['repeat-delay'] * 1000);
+      } else {
+        messages.forEach((msg, idx) => {
+          setTimeout(() => sendBedrockChatMessage(msg), idx * 1000);
+        });
+      }
+    }
+  }
+
+  if (config.utils['anti-afk']?.enabled) {
+    addInterval(() => {
+      if (!botState.connected) return;
+      sendBedrockChatMessage('.');
+      botState.lastActivity = Date.now();
+    }, 30000);
+  }
+
+  console.log('[Bedrock] Compatible modules initialized (chat/auth/anti-afk).');
+}
+
 function createBot() {
   if (isReconnecting) {
     console.log('[Bot] Already reconnecting, skipping...');
@@ -458,11 +525,109 @@ function createBot() {
     }
     bot = null;
   }
+  if (bedrockClient) {
+    clearAllIntervals();
+    try {
+      bedrockClient.removeAllListeners();
+      bedrockClient.close();
+    } catch (e) {
+      console.log('[Cleanup] Error closing previous bedrock client:', e.message);
+    }
+    bedrockClient = null;
+  }
 
   console.log(`[Bot] Creating bot instance...`);
-  console.log(`[Bot] Connecting to ${config.server.ip}:${config.server.port}`);
+  console.log(`[Bot] Connecting to ${config.server.ip}:${config.server.port} using ${isBedrockMode ? 'bedrock' : 'java'} protocol`);
 
   try {
+    if (isBedrockMode) {
+      bedrockClient = bedrockProtocol.createClient({
+        host: config.server.ip,
+        port: config.server.port,
+        version: config.server.version || undefined,
+        username: config['bot-account'].username,
+        offline: config['bot-account'].type !== 'microsoft',
+        connectTimeout: 120000,
+        conLog: null
+      });
+
+      const connectionTimeout = setTimeout(() => {
+        if (!botState.connected) {
+          console.log('[Bedrock] Connection timeout - no spawn received');
+          scheduleReconnect();
+        }
+      }, 60000);
+
+      const markBedrockConnected = () => {
+        if (botState.connected) return;
+        clearTimeout(connectionTimeout);
+        botState.connected = true;
+        botState.lastActivity = Date.now();
+        botState.reconnectAttempts = 0;
+        isReconnecting = false;
+        viewerReady = false;
+        console.log('[Bedrock] [+] Successfully connected to server!');
+        if (config.discord && config.discord.events.connect) {
+          sendDiscordWebhook(`[+] **Connected (Bedrock)** to \`${config.server.ip}\``, 0x4ade80);
+        }
+        initializeBedrockModules();
+      };
+
+      bedrockClient.once('join', markBedrockConnected);
+      bedrockClient.once('spawn', markBedrockConnected);
+
+      bedrockClient.on('heartbeat', () => {
+        botState.lastActivity = Date.now();
+      });
+
+      bedrockClient.on('text', (packet) => {
+        if (!config.utils['chat-log']) return;
+        const source = packet?.source_name ? `${packet.source_name}: ` : '';
+        const message = packet?.message ?? '';
+        if (message) {
+          console.log(`[Chat] ${source}${message}`);
+        }
+      });
+
+      bedrockClient.on('close', (reason) => {
+        console.log(`[Bedrock] Disconnected: ${reason || 'Unknown reason'}`);
+        botState.connected = false;
+        viewerReady = false;
+        clearAllIntervals();
+
+        if (config.discord && config.discord.events.disconnect && reason !== 'Periodic Rejoin') {
+          sendDiscordWebhook(`[-] **Disconnected (Bedrock)**: ${reason || 'Unknown'}`, 0xf87171);
+        }
+
+        if (config.utils['auto-reconnect']) {
+          scheduleReconnect();
+        }
+      });
+
+      bedrockClient.on('kick', (reason) => {
+        console.log(`[Bedrock] Kicked: ${reason || 'Unknown reason'}`);
+        botState.connected = false;
+        viewerReady = false;
+        botState.errors.push({ type: 'kicked', reason, time: Date.now() });
+        clearAllIntervals();
+
+        if (config.discord && config.discord.events.disconnect) {
+          sendDiscordWebhook(`[!] **Kicked (Bedrock)**: ${reason || 'Unknown'}`, 0xff0000);
+        }
+
+        if (config.utils['auto-reconnect']) {
+          scheduleReconnect();
+        }
+      });
+
+      bedrockClient.on('error', (err) => {
+        console.log(`[Bedrock] Error: ${err.message}`);
+        botState.errors.push({ type: 'error', message: err.message, time: Date.now() });
+      });
+
+      return;
+    }
+
     bot = mineflayer.createBot({
       username: config['bot-account'].username,
       password: config['bot-account'].password || undefined,
@@ -909,12 +1074,35 @@ const rl = readline.createInterface({
 });
 
 rl.on('line', (line) => {
-  if (!bot || !botState.connected) {
+  if (!botState.connected) {
     console.log('[Console] Bot not connected');
     return;
   }
 
   const trimmed = line.trim();
+  if (isBedrockMode) {
+    if (trimmed === 'status') {
+      console.log(`Connected: ${botState.connected}, Uptime: ${formatUptime(Math.floor((Date.now() - botState.startTime) / 1000))}`);
+    } else if (trimmed === 'reconnect') {
+      console.log('[Console] Manual reconnect requested');
+      if (bedrockClient) {
+        try {
+          bedrockClient.close();
+        } catch (e) {
+          console.log(`[Console] Bedrock close error: ${e.message}`);
+        }
+      }
+      scheduleReconnect(0, { forceNewAttempt: true, source: 'console' });
+    } else if (trimmed.startsWith('say ')) {
+      sendBedrockChatMessage(trimmed.slice(4));
+    } else if (trimmed.startsWith('cmd ')) {
+      sendBedrockChatMessage('/' + trimmed.slice(4));
+    } else {
+      sendBedrockChatMessage(trimmed);
+    }
+    return;
+  }
+
   if (trimmed.startsWith('say ')) {
     bot.chat(trimmed.slice(4));
   } else if (trimmed.startsWith('cmd ')) {
@@ -1019,6 +1207,7 @@ console.log('='.repeat(50));
 console.log('  Minecraft AFK Bot v2.3 - Bug Fix Edition');
 console.log('='.repeat(50));
 console.log(`Server: ${config.server.ip}:${config.server.port}`);
+console.log(`Protocol: ${serverProtocol}`);
 console.log(`Version: ${config.server.version}`);
 console.log(`Auto-Reconnect: ${config.utils['auto-reconnect'] ? 'Enabled' : 'Disabled'}`);
 console.log('='.repeat(50));
