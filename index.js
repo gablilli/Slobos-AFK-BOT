@@ -327,12 +327,9 @@ app.get('/health', (req, res) => {
 
 app.post('/reconnect', (req, res) => {
   console.log('[Dashboard] Manual reconnect requested');
-
-  if (isReconnecting) {
-    return res.status(409).json({ ok: false, message: 'Reconnect already in progress' });
-  }
-
-  scheduleReconnect(0);
+  // Always allow manual reconnect requests, even if one is already in progress.
+  // This forces a fresh reconnect cycle immediately.
+  scheduleReconnect(0, { forceNewAttempt: true, source: 'dashboard' });
 
   res.json({ ok: true, message: 'Reconnect requested' });
 });
@@ -595,22 +592,31 @@ function createBot() {
   }
 }
 
-function scheduleReconnect(overrideDelayMs) {
+function scheduleReconnect(overrideDelayMs, options = {}) {
+  const forceNewAttempt = Boolean(options.forceNewAttempt);
+  const source = options.source || 'auto';
+  const wasReconnecting = isReconnecting;
+
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
   }
 
-  if (isReconnecting) {
-    return;
+  // Count a new attempt only when entering reconnect mode,
+  // or when the caller explicitly forces a fresh attempt.
+  if (!wasReconnecting || forceNewAttempt) {
+    botState.reconnectAttempts++;
   }
 
   isReconnecting = true;
-  botState.reconnectAttempts++;
 
   const delay = Number.isFinite(overrideDelayMs) ? Math.max(0, overrideDelayMs) : getReconnectDelay();
-  console.log(`[Bot] Reconnecting in ${delay / 1000}s (attempt #${botState.reconnectAttempts})`);
+  console.log(
+    `[Bot] Reconnecting in ${delay / 1000}s (attempt #${botState.reconnectAttempts}, source: ${source}${wasReconnecting ? ', rescheduled' : ''})`
+  );
 
   reconnectTimeout = setTimeout(() => {
+    reconnectTimeout = null;
     isReconnecting = false;
     createBot();
   }, delay);
