@@ -618,7 +618,12 @@ function scheduleReconnect(overrideDelayMs, options = {}) {
   reconnectTimeout = setTimeout(() => {
     reconnectTimeout = null;
     isReconnecting = false;
-    createBot();
+    try {
+      createBot();
+    } catch (err) {
+      console.log(`[Bot] Reconnect callback failed: ${err.message}`);
+      scheduleReconnect(undefined, { source: 'reconnect-callback-error' });
+    }
   }, delay);
 }
 
