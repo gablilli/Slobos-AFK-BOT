@@ -562,6 +562,7 @@ function createBot() {
         username: config['bot-account'].username,
         offline: config['bot-account'].type !== 'microsoft',
         connectTimeout: bedrockConnectTimeout,
+        skipPing: true,
         conLog: null
       };
       if (config.server.version) {
