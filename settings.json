@@ -8,8 +8,7 @@
   "server": {
     "protocol": "bedrock",
     "ip": "thijngamer011.aternos.me",
-    "port": 48412,
-    "version": "26.10"
+    "port": 48412
   },
   "position": {
     "enabled": true,
