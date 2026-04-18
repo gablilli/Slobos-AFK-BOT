@@ -11,7 +11,7 @@
   "license": "MIT",
   "dependencies": {
     "canvas": "^2.11.2",
-    "bedrock-protocol": "github:gablilli/bedrock-protocol#348b4aa",
+    "bedrock-protocol": "github:gablilli/bedrock-protocol#8a0ffa5",
     "express": "^4.18.1",
     "minecraft-data": "^3.109.0",
     "mineflayer": "^4.35.0",
