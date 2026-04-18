@@ -1,6 +1,6 @@
 {
   "name": "minecraft-afk-bot",
-  "version": "2.8",
+  "version": "2.9",
   "description": "Robust AFK bot for Minecraft servers with infinite uptime.",
   "main": "index.js",
   "scripts": {
