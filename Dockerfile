@@ -1,5 +1,5 @@
 FROM node:22-bookworm
-# cache-bust: 2026-04-18-v3.1
+# cache-bust: 2026-04-18-v3.2
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
